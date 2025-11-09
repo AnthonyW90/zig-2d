@@ -111,9 +111,8 @@ pub fn main() !void {
         }
 
         // Movement and jump input
+        var isMoving = false;
         if (!isAttacking) {
-            var isMoving = false;
-
             if (isOnGround) {
                 // On ground: direct control, no momentum
                 velocityX = 0.0;
@@ -149,6 +148,9 @@ pub fn main() !void {
                     velocityX *= airFriction;
                     if (@abs(velocityX) < 5.0) velocityX = 0.0;
                 }
+
+                // If no input, keep current momentum (no air friction for now)
+                isMoving = velocityX != 0.0;
             }
 
             // Jump input - only when on ground
@@ -208,14 +210,31 @@ pub fn main() !void {
             .attacking => if (direction == .left) sprites.attack_left else sprites.attack_right,
         };
 
+        // Camera setup - follows player with smooth lerp
+        const camera = rl.Camera2D{
+            .offset = rl.Vector2{
+                .x = @as(f32, @floatFromInt(screenWidth)) / 2.0,
+                .y = @as(f32, @floatFromInt(screenHeight)) / 2.0,
+            },
+            .target = rl.Vector2{
+                .x = playerX + frameWidth / 2.0,
+                .y = playerY + frameHeight / 2.0,
+            },
+            .rotation = 0.0,
+            .zoom = 1.0,
+        };
+
         // Drawing
         rl.beginDrawing();
         defer rl.endDrawing();
 
         rl.clearBackground(rl.Color.sky_blue);
 
-        // Draw ground
-        rl.drawRectangle(0, 500, screenWidth, 100, rl.Color.green);
+        // Start camera mode
+        rl.beginMode2D(camera);
+
+        // Draw ground - make it wider to see camera movement
+        rl.drawRectangle(-1000, 500, 3000, 100, rl.Color.green);
 
         // Source rectangle
         const sourceRec = rl.Rectangle{
@@ -245,6 +264,10 @@ pub fn main() !void {
             rl.Color.white,
         );
 
+        // End camera mode
+        rl.endMode2D();
+
+        // Draw UI elements (not affected by camera)
         // Draw instructions
         rl.drawText("LEFT/RIGHT: Move | UP: Jump | SPACE: Attack", 10, 10, 20, rl.Color.black);
 
