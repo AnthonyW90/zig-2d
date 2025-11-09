@@ -1,5 +1,6 @@
 const std = @import("std");
 const rl = @import("raylib");
+const ldtk = @import("ldtk_loader.zig");
 
 const AnimationState = enum {
     idle,
@@ -33,10 +34,17 @@ pub fn main() !void {
     const screenWidth = 800;
     const screenHeight = 600;
 
-    rl.initWindow(screenWidth, screenHeight, "MapleStory Test - Jumping!");
+    rl.initWindow(screenWidth, screenHeight, "MapleStory Test - LDtk Map!");
     defer rl.closeWindow();
 
     rl.setTargetFPS(60);
+
+    // Load the LDtk map
+    const allocator = std.heap.page_allocator;
+    var map = try ldtk.loadLDtkMap(allocator, "assets/levels/sample.ldtk");
+    defer map.deinit();
+
+    std.debug.print("Map loaded! Size: {}x{}, Grid: {}\n", .{ map.width, map.height, map.grid_size });
 
     // Load all sprite sheets
     var sprites = SpriteSet{
@@ -52,21 +60,19 @@ pub fn main() !void {
     const frameWidth: f32 = 64.0;
     const frameHeight: f32 = 64.0;
 
-    // const idleFrames: i32 = 1;
     const walkFrames: i32 = 4;
     const attackFrames: i32 = 3;
 
     // Player position and physics
-    var playerX: f32 = 350.0;
-    var playerY: f32 = 400.0;
+    var playerX: f32 = 100.0;
+    var playerY: f32 = 100.0;
     var velocityX: f32 = 0.0;
     var velocityY: f32 = 0.0;
 
     // Physics constants
-    const gravity: f32 = 980.0; // Pixels per second squared (MapleStory has snappy gravity)
-    const jumpStrength: f32 = -400.0; // Negative = upward
+    const gravity: f32 = 980.0;
+    const jumpStrength: f32 = -400.0;
     const moveSpeed: f32 = 200.0;
-    const groundY: f32 = 420.0; // Y position of the ground (adjust based on your ground height)
 
     var isOnGround: bool = false;
 
@@ -83,17 +89,31 @@ pub fn main() !void {
     var attackTimer: i32 = 0;
     const attackDuration: i32 = 30;
 
-    // Camera smooth following
-    var cameraTargetX: f32 = 350.0;
-    var cameraTargetY: f32 = 400.0;
+    // Camera state
+    var cameraTargetX: f32 = playerX + frameWidth / 2.0;
+    var cameraTargetY: f32 = playerY + frameHeight / 2.0;
 
     while (!rl.windowShouldClose()) {
         const deltaTime = rl.getFrameTime();
 
-        // Check if on ground
-        isOnGround = playerY >= groundY;
+        // Check collision with map at player's feet
+        const playerBottom = playerY + frameHeight;
+        const playerLeft = playerX;
+        const playerRight = playerX + frameWidth;
+        const playerCenter = playerX + frameWidth / 2.0;
+
+        // Check multiple points at the bottom of the player
+        const checkBottomLeft = map.isCollisionAt(playerLeft, playerBottom);
+        const checkBottomCenter = map.isCollisionAt(playerCenter, playerBottom);
+        const checkBottomRight = map.isCollisionAt(playerRight, playerBottom);
+
+        isOnGround = (checkBottomLeft or checkBottomCenter or checkBottomRight) and velocityY >= 0;
+
         if (isOnGround) {
-            playerY = groundY;
+            // Snap to grid
+            const gridSize = @as(f32, @floatFromInt(map.grid_size));
+            const tileY = @floor(playerBottom / gridSize);
+            playerY = tileY * gridSize - frameHeight;
             velocityY = 0.0;
         }
 
@@ -115,10 +135,11 @@ pub fn main() !void {
         }
 
         // Movement and jump input
-        var isMoving = false;
         if (!isAttacking) {
+            var isMoving = false;
+
             if (isOnGround) {
-                // On ground: direct control, no momentum
+                // On ground: direct control
                 velocityX = 0.0;
 
                 if (rl.isKeyDown(.right)) {
@@ -132,9 +153,9 @@ pub fn main() !void {
                     isMoving = true;
                 }
             } else {
-                // In air: apply acceleration for momentum-based control
-                const airAcceleration: f32 = 1000.0; // How fast you can change direction in air
-                const maxAirSpeed: f32 = 200.0; // Max horizontal speed in air
+                // In air: acceleration-based control
+                const airAcceleration: f32 = 1000.0;
+                const maxAirSpeed: f32 = 200.0;
 
                 if (rl.isKeyDown(.right)) {
                     velocityX += airAcceleration * deltaTime;
@@ -147,22 +168,15 @@ pub fn main() !void {
                     direction = .left;
                 }
 
-                const airFriction: f32 = 0.98;
-                if (!rl.isKeyDown(.left) and !rl.isKeyDown(.right)) {
-                    velocityX *= airFriction;
-                    if (@abs(velocityX) < 5.0) velocityX = 0.0;
-                }
-
-                // If no input, keep current momentum (no air friction for now)
                 isMoving = velocityX != 0.0;
             }
 
-            // Jump input - only when on ground
+            // Jump input
             if (rl.isKeyPressed(.up) and isOnGround) {
                 velocityY = jumpStrength;
             }
 
-            // Update animation state based on movement and ground status
+            // Update animation state
             if (!isOnGround) {
                 animState = .jumping;
             } else if (isMoving) {
@@ -201,25 +215,16 @@ pub fn main() !void {
         playerX += velocityX * deltaTime;
         playerY += velocityY * deltaTime;
 
-        // Keep player on screen (simple bounds)
+        // Keep player in map bounds
+        const mapPixelWidth = @as(f32, @floatFromInt(map.width * map.grid_size));
         if (playerX < 0) playerX = 0;
-        if (playerX > @as(f32, @floatFromInt(screenWidth)) - frameWidth) {
-            playerX = @as(f32, @floatFromInt(screenWidth)) - frameWidth;
-        }
+        if (playerX > mapPixelWidth - frameWidth) playerX = mapPixelWidth - frameWidth;
 
-        // Select current texture
-        const currentTexture = switch (animState) {
-            .idle, .jumping => sprites.idle, // Use idle sprite for jumping (you can add jump sprite later)
-            .walking => if (direction == .left) sprites.walk_left else sprites.walk_right,
-            .attacking => if (direction == .left) sprites.attack_left else sprites.attack_right,
-        };
-
-        // Smooth camera following (lerp)
-        const cameraSmooth: f32 = 5.0; // Higher = snappier, lower = smoother
+        // Smooth camera following
+        const cameraSmooth: f32 = 5.0;
         cameraTargetX += (playerX + frameWidth / 2.0 - cameraTargetX) * cameraSmooth * deltaTime;
         cameraTargetY += (playerY + frameHeight / 2.0 - cameraTargetY) * cameraSmooth * deltaTime;
 
-        // Camera setup - follows player with smooth lerp
         const camera = rl.Camera2D{
             .offset = rl.Vector2{
                 .x = @as(f32, @floatFromInt(screenWidth)) / 2.0,
@@ -230,7 +235,14 @@ pub fn main() !void {
                 .y = cameraTargetY,
             },
             .rotation = 0.0,
-            .zoom = 1.0,
+            .zoom = 2.0,
+        };
+
+        // Select current texture
+        const currentTexture = switch (animState) {
+            .idle, .jumping => sprites.idle,
+            .walking => if (direction == .left) sprites.walk_left else sprites.walk_right,
+            .attacking => if (direction == .left) sprites.attack_left else sprites.attack_right,
         };
 
         // Drawing
@@ -239,11 +251,27 @@ pub fn main() !void {
 
         rl.clearBackground(rl.Color.sky_blue);
 
-        // Start camera mode
+        // Camera world rendering
         rl.beginMode2D(camera);
 
-        // Draw ground - make it wider to see camera movement
-        rl.drawRectangle(-1000, 500, 3000, 100, rl.Color.green);
+        // Draw the collision tilemap
+        const gridSize = @as(f32, @floatFromInt(map.grid_size));
+        for (0..map.height) |y| {
+            for (0..map.width) |x| {
+                const index = y * map.width + x;
+                if (map.collision_data[index] == 1) {
+                    const tileX = @as(f32, @floatFromInt(x)) * gridSize;
+                    const tileY = @as(f32, @floatFromInt(y)) * gridSize;
+                    rl.drawRectangle(
+                        @intFromFloat(tileX),
+                        @intFromFloat(tileY),
+                        @intFromFloat(gridSize),
+                        @intFromFloat(gridSize),
+                        rl.Color.brown,
+                    );
+                }
+            }
+        }
 
         // Source rectangle
         const sourceRec = rl.Rectangle{
@@ -273,14 +301,11 @@ pub fn main() !void {
             rl.Color.white,
         );
 
-        // End camera mode
         rl.endMode2D();
 
-        // Draw UI elements (not affected by camera)
-        // Draw instructions
+        // UI rendering (stays on screen)
         rl.drawText("LEFT/RIGHT: Move | UP: Jump | SPACE: Attack", 10, 10, 20, rl.Color.black);
 
-        // Debug info
         const stateText = switch (animState) {
             .idle => "Idle",
             .walking => "Walking",
