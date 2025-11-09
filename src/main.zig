@@ -83,6 +83,10 @@ pub fn main() !void {
     var attackTimer: i32 = 0;
     const attackDuration: i32 = 30;
 
+    // Camera smooth following
+    var cameraTargetX: f32 = 350.0;
+    var cameraTargetY: f32 = 400.0;
+
     while (!rl.windowShouldClose()) {
         const deltaTime = rl.getFrameTime();
 
@@ -210,6 +214,11 @@ pub fn main() !void {
             .attacking => if (direction == .left) sprites.attack_left else sprites.attack_right,
         };
 
+        // Smooth camera following (lerp)
+        const cameraSmooth: f32 = 5.0; // Higher = snappier, lower = smoother
+        cameraTargetX += (playerX + frameWidth / 2.0 - cameraTargetX) * cameraSmooth * deltaTime;
+        cameraTargetY += (playerY + frameHeight / 2.0 - cameraTargetY) * cameraSmooth * deltaTime;
+
         // Camera setup - follows player with smooth lerp
         const camera = rl.Camera2D{
             .offset = rl.Vector2{
@@ -217,8 +226,8 @@ pub fn main() !void {
                 .y = @as(f32, @floatFromInt(screenHeight)) / 2.0,
             },
             .target = rl.Vector2{
-                .x = playerX + frameWidth / 2.0,
-                .y = playerY + frameHeight / 2.0,
+                .x = cameraTargetX,
+                .y = cameraTargetY,
             },
             .rotation = 0.0,
             .zoom = 1.0,
